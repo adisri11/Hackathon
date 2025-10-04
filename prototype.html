@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>
+        let allPublications = [];
+        let filteredPublications = [];
+        let chart = null;
+
+        async function loadData() {
+            document.getElementById('loading').innerHTML = '⏳ Loading publications...';
+            
+            try {
+                // Load CSV from GitHub
+                const response = await fetch('https://raw.githubusercontent.com/jgalazka/SB_publications/main/SB_publications_PMC.csv');
+                const csvText = await response.text();
+                
+                // Parse CSV
+                Papa.parse(csvText, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: function(results) {
+                        allPublications = results.data.map((row, index) => {
+                            const title = row.Title || row.title || 'Untitled';
+                            const url = row.URL || row.url || row['PMC Link'] || '';
+                            
+                            // Extract year from title or URL
+                            const yearMatch = title.match(/\b(20\d{2})\b/) || url.match(/\b(20\d{2})\b/);
+                            const year = yearMatch ? yearMatch[1] : 'Unknown';
+                            
+                            // Extract keywords from title
+                            const keywords = extractKeywords(title);
+                            
+                            return {
+                                id: index,
+                                title: title,
+                                url: url,
+                                year: year,
+                                keywords: keywords
+                            };
+                        });
+                        
+                        filteredPublications = [...allPublications];
+                        renderAll();
+                        
+                        document.getElementById('loading').style.display = 'none';
+                        document.getElementById('mainContent').style.display = 'grid';
+                    }
+                });
+            } catch (error) {
+                document.getElementById('loading').innerHTML = '❌ Error loading data. Please try again.';
+                console.error('Error:', error);
+            }
+        }
+
+        function extractKeywords(text) {
+            const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below']);
+            
+            return text
+                .toLowerCase()
+                .match(/\b[a-z]+\b/g)
+                ?.filter(word => word.length > 4 && !stopWords.has(word))
+                .slice(0, 5) || [];
+        }
+
+        function renderAll() {
+            renderStats();
+            renderChart();
+            renderPublications();
+            populateYearFilter();
+            generateInsights();
+        }
+
+        function renderStats() {
+            document.getElementById('totalCount').textContent = filteredPublications.length;
+            
+            const years = new Set(filteredPublications.map(p => p.year).filter(y => y !== 'Unknown'));
+            document.getElementById('yearCount').textContent = years.size;
+        }
+
+        function renderChart() {
+            const yearCounts = {};
+            filteredPublications.forEach(pub => {
+                if (pub.year !== 'Unknown') {
+                    yearCounts[pub.year] = (yearCounts[pub.year] || 0) + 1;
+                }
+            });
+
+            const sortedYears = Object.keys(yearCounts).sort();
+            const counts = sortedYears.map(year => yearCounts[year]);
+
+            const ctx = document.getElementById('yearChart');
+            
+            if (chart) {
+                chart.destroy();
+            }
+
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sortedYears,
+                    datasets: [{
+                        label: 'Publications',
+                        data: counts,
+                        backgroundColor: 'rgba(102, 126, 234, 0.8)',
+                        borderColor: 'rgba(102, 126, 234, 1)',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 10
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderPublications() {
+            const listContainer = document.getElementById('publicationList');
+            
+            if (filteredPublications.length === 0) {
+                listContainer.innerHTML = '<div class="pub-card"><p>No publications found matching your criteria.</p></div>';
+                return;
+            }
+
+            listContainer.innerHTML = filteredPublications.map(pub => `
+                <div class="pub-card">
+                    <div class="pub-title">${pub.title}</div>
+                    <div style="margin: 10px 0;">
+                        <span class="badge">${pub.year}</span>
+                        ${pub.keywords.slice(0, 3).map(kw => `<span class="badge">${kw}</span>`).join('')}
+                    </div>
+                    <a href="${pub.url}" target="_blank" class="pub-link">Read Full Paper →</a>
+                </div>
+            `).join('');
+        }
+
+        function populateYearFilter() {
+            const years = [...new Set(allPublications.map(p => p.year).filter(y => y !== 'Unknown'))].sort().reverse();
+            const select = document.getElementById('yearFilter');
+            
+            select.innerHTML = '<option value="all">All Years</option>' +
+                years.map(year => `<option value="${year}">${year}</option>`).join('');
+        }
+
+        function generateInsights() {
+            const insightsDiv = document.getElementById('insights');
+            
+            // Find most common keywords
+            const keywordCounts = {};
+            filteredPublications.forEach(pub => {
+                pub.keywords.forEach(kw => {
+                    keywordCounts[kw] = (keywordCounts[kw] || 0) + 1;
+                });
+            });
+
+            const topKeywords = Object.entries(keywordCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5);
+
+            // Calculate publication rate
+            const yearCounts = {};
+            filteredPublications.forEach(pub => {
+                if (pub.year !== 'Unknown') {
+                    yearCounts[pub.year] = (yearCounts[pub.year] || 0) + 1;
+                }
+            });
+
+            const years = Object.keys(yearCounts).sort();
+            const avgPerYear = filteredPublications.length / years.length;
+
+            insightsDiv.innerHTML = `
+                <p style="margin-bottom: 10px;"><strong>📚 Top Research Topics:</strong></p>
+                <ul style="margin-left: 20px; margin-bottom: 15px;">
+                    ${topKeywords.map(([kw, count]) => 
+                        `<li>${kw}: ${count} papers</li>`
+                    ).join('')}
+                </ul>
+                <p><strong>📊 Avg Publications/Year:</strong> ${Math.round(avgPerYear)}</p>
+                <p style="margin-top: 10px;"><strong>📈 Peak Year:</strong> ${
+                    Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'
+                }</p>
+            `;
+        }
+
+        // Search and filter functionality
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            applyFilters(query, document.getElementById('yearFilter').value);
+        });
+
+        document.getElementById('yearFilter').addEventListener('change', (e) => {
+            const query = document.getElementById('searchInput').value.toLowerCase();
+            applyFilters(query, e.target.value);
+        });
+
+        function applyFilters(searchQuery, yearFilter) {
+            filteredPublications = allPublications.filter(pub => {
+                const matchesSearch = !searchQuery || 
+                    pub.title.toLowerCase().includes(searchQuery) ||
+                    pub.keywords.some(kw => kw.includes(searchQuery));
+                
+                const matchesYear = yearFilter === 'all' || pub.year === yearFilter;
+                
+                return matchesSearch && matchesYear;
+            });
+
+            renderAll();
+        }
+
+        function exportResults() {
+            const csv = Papa.unparse(filteredPublications);
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'biospace_export.csv';
+            a.click();
+        }
+
+        // Add keyboard shortcut for search
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'k') {
+                e.preventDefault();
+                document.getElementById('searchInput').focus();
+            }
+        });
+
+        // Add sample queries for demo
+        const sampleQueries = [
+            'bone',
+            'radiation',
+            'plant',
+            'microgravity',
+            'muscle',
+            'cardiovascular',
+            'immune',
+            'bacteria'
+        ];
+
+        function runDemo() {
+            let index = 0;
+            const demoInterval = setInterval(() => {
+                if (index >= sampleQueries.length) {
+                    clearInterval(demoInterval);
+                    document.getElementById('searchInput').value = '';
+                    applyFilters('', 'all');
+                    return;
+                }
+                
+                const query = sampleQueries[index];
+                document.getElementById('searchInput').value = query;
+                applyFilters(query, 'all');
+                index++;
+            }, 2000);
+        }
+
+        // Add demo button when data is loaded
+        function addDemoButton() {
+            const controls = document.querySelector('.controls');
+            const demoBtn = document.createElement('button');
+            demoBtn.textContent = '🎬 Run Demo';
+            demoBtn.onclick = runDemo;
+            controls.appendChild(demoBtn);
+        }
+
+        // Initial load prompt
+        console.log('BioSpace Explorer Ready! Click "Load Data" to begin.');
+        console.log('Keyboard shortcut: Ctrl+K to focus search');
+    </script>
+</body>
+</html><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BioSpace Explorer - Quick Prototype</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .controls {
+            padding: 30px;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e9ecef;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        input, select, button {
+            padding: 12px 20px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 1rem;
+        }
+
+        input {
+            flex: 1;
+            min-width: 300px;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 30px;
+            padding: 30px;
+        }
+
+        .stats-panel {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 12px;
+        }
+
+        .stat-box {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .stat-box h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .stat-number {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .publications {
+            max-height: 800px;
+            overflow-y: auto;
+        }
+
+        .pub-card {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+            transition: all 0.3s;
+            border-left: 4px solid #667eea;
+        }
+
+        .pub-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+        }
+
+        .pub-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: #2d3748;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+
+        .pub-link {
+            display: inline-block;
+            margin-top: 15px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .pub-link:hover {
+            text-decoration: underline;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #e9ecef;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            margin-right: 8px;
+            color: #495057;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            font-size: 1.5rem;
+            color: #667eea;
+        }
+
+        .chart-container {
+            margin-top: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 BioSpace Explorer</h1>
+            <p class="subtitle">Explore NASA Space Biology Publications</p>
+        </header>
+
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="Search publications...">
+            <select id="yearFilter">
+                <option value="all">All Years</option>
+            </select>
+            <button onclick="loadData()">Load Data</button>
+            <button onclick="exportResults()">Export Results</button>
+        </div>
+
+        <div id="loading" class="loading">
+            Click "Load Data" to start exploring 608 publications
+        </div>
+
+        <div id="mainContent" class="main-content" style="display: none;">
+            <div class="stats-panel">
+                <div class="stat-box">
+                    <h3>Total Publications</h3>
+                    <div class="stat-number" id="totalCount">0</div>
+                </div>
+                <div class="stat-box">
+                    <h3>Years Covered</h3>
+                    <div class="stat-number" id="yearCount">0</div>
+                </div>
+                <div class="stat-box">
+                    <h3>Publications by Year</h3>
+                    <canvas id="yearChart"></canvas>
+                </div>
+                <div class="stat-box">
+                    <h3>Quick Insights</h3>
+                    <div id="insights"></div>
+                </div>
+            </div>
+
+            <div class="publications" id="publicationList"></div>
+        </div>
+    </div>
