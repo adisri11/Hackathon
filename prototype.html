@@ -1,13 +1,9 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!DOCTYPE html>
-<html lang="en">
-<head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BioSpace Explorer - Quick Prototype</title>
-    <!-- Link to the external CSS file -->
     <link rel="stylesheet" href="stylesheet.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
@@ -19,19 +15,25 @@
             <p class="subtitle">Explore NASA Space Biology Publications</p>
         </header>
 
-        <div class="controls">
-            <input type="text" id="searchInput" placeholder="Search publications...">
-            <select id="yearFilter">
-                <option value="all">All Years</option>
-            </select>
+        <!-- Controls before data load -->
+        <div class="controls" id="preLoadControls">
             <button onclick="loadData()">Load Data</button>
-            <button onclick="exportResults()">Export Results</button>
         </div>
 
         <div id="loading" class="loading">
             Click "Load Data" to start exploring 608 publications
         </div>
 
+        <!-- Controls shown after data load -->
+        <div class="controls" id="postLoadControls" style="display: none;">
+            <input type="text" id="searchInput" placeholder="Search publications...">
+            <select id="yearFilter">
+                <option value="all">All Years</option>
+            </select>
+            <button onclick="exportResults()">Export Results</button>
+        </div>
+
+        <!-- Main content -->
         <div id="mainContent" class="main-content" style="display: none;">
             <div class="stats-panel">
                 <div class="stat-box">
@@ -45,7 +47,6 @@
                 <div class="stat-box">
                     <h3>Publications by Year</h3>
                     <canvas id="yearChart"></canvas>
-                    <div id="unknownCount" style="margin-top: 8px; font-style: italic;"></div>
                 </div>
                 <div class="stat-box">
                     <h3>Quick Insights</h3>
@@ -56,6 +57,7 @@
             <div class="publications" id="publicationList"></div>
         </div>
     </div>
+
     <script>
         let allPublications = [];
         let filteredPublications = [];
@@ -63,12 +65,12 @@
 
         async function loadData() {
             document.getElementById('loading').innerHTML = '⏳ Loading publications...';
-            
+
             try {
                 // Load CSV from GitHub
                 const response = await fetch('https://raw.githubusercontent.com/jgalazka/SB_publications/refs/heads/main/SB_publication_PMC.csv');
                 const csvText = await response.text();
-                
+
                 // Parse CSV
                 Papa.parse(csvText, {
                     header: true,
@@ -77,29 +79,27 @@
                         allPublications = results.data.map((row, index) => {
                             const title = row.Title || row.title || 'Untitled';
                             const url = row.URL || row.url || row['PMC Link'] || '';
-                            
-                            // Extract year from title or URL
+
                             const yearMatch = title.match(/\b(20\d{2})\b/) || url.match(/\b(20\d{2})\b/);
                             const year = yearMatch ? yearMatch[1] : 'Unknown';
-                            
-                            // Extract keywords from title
                             const keywords = extractKeywords(title);
-                            
+
                             return {
                                 id: index,
-                                title: title,
-                                url: url,
-                                year: year,
-                                keywords: keywords
+                                title,
+                                url,
+                                year,
+                                keywords
                             };
                         });
-                        
+
                         filteredPublications = [...allPublications];
-                        populateYearFilter();
                         renderAll();
-                        
+
                         document.getElementById('loading').style.display = 'none';
                         document.getElementById('mainContent').style.display = 'grid';
+                        document.getElementById('preLoadControls').style.display = 'none';
+                        document.getElementById('postLoadControls').style.display = 'flex';
                     }
                 });
             } catch (error) {
@@ -110,7 +110,6 @@
 
         function extractKeywords(text) {
             const stopWords = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above', 'below']);
-            
             return text
                 .toLowerCase()
                 .match(/\b[a-z]+\b/g)
@@ -122,25 +121,21 @@
             renderStats();
             renderChart();
             renderPublications();
+            populateYearFilter();
             generateInsights();
         }
 
         function renderStats() {
             document.getElementById('totalCount').textContent = filteredPublications.length;
-            
             const years = new Set(filteredPublications.map(p => p.year).filter(y => y !== 'Unknown'));
             document.getElementById('yearCount').textContent = years.size;
         }
 
         function renderChart() {
             const yearCounts = {};
-            let unknownCount = 0;
-
             filteredPublications.forEach(pub => {
                 if (pub.year !== 'Unknown') {
                     yearCounts[pub.year] = (yearCounts[pub.year] || 0) + 1;
-                } else {
-                    unknownCount++;
                 }
             });
 
@@ -148,10 +143,7 @@
             const counts = sortedYears.map(year => yearCounts[year]);
 
             const ctx = document.getElementById('yearChart');
-            
-            if (chart) {
-                chart.destroy();
-            }
+            if (chart) chart.destroy();
 
             chart = new Chart(ctx, {
                 type: 'bar',
@@ -171,27 +163,18 @@
                     scales: {
                         y: {
                             beginAtZero: true,
-                            ticks: {
-                                stepSize: 10
-                            }
+                            ticks: { stepSize: 10 }
                         }
                     },
                     plugins: {
-                        legend: {
-                            display: false
-                        }
+                        legend: { display: false }
                     }
                 }
             });
-            const unknownDiv = document.getElementById('unknownCount');
-            unknownDiv.textContent = unknownCount > 0 
-                ? `Publications with unknown year: ${unknownCount}` 
-                : '';
         }
 
         function renderPublications() {
             const listContainer = document.getElementById('publicationList');
-            
             if (filteredPublications.length === 0) {
                 listContainer.innerHTML = '<div class="pub-card"><p>No publications found matching your criteria.</p></div>';
                 return;
@@ -212,29 +195,12 @@
         function populateYearFilter() {
             const years = [...new Set(allPublications.map(p => p.year).filter(y => y !== 'Unknown'))].sort().reverse();
             const select = document.getElementById('yearFilter');
-            
             select.innerHTML = '<option value="all">All Years</option>' +
                 years.map(year => `<option value="${year}">${year}</option>`).join('');
         }
 
-        function setYearFilter(year) {
-            const yearFilter = document.getElementById('yearFilter');
-            yearFilter.value = year; 
-
-            const displayDiv = document.getElementById('selectedYearDisplay');
-            displayDiv.textContent = year === 'all'
-                ? 'Showing publications for: All Years'
-                : `Showing publications for: ${year}`;
-
-            const searchQuery = document.getElementById('searchInput').value.toLowerCase();
-            applyFilters(searchQuery, year);
-        }
-
-
         function generateInsights() {
             const insightsDiv = document.getElementById('insights');
-            
-            // Find most common keywords
             const keywordCounts = {};
             filteredPublications.forEach(pub => {
                 pub.keywords.forEach(kw => {
@@ -246,7 +212,6 @@
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 5);
 
-            // Calculate publication rate
             const yearCounts = {};
             filteredPublications.forEach(pub => {
                 if (pub.year !== 'Unknown') {
@@ -258,49 +223,39 @@
             const avgPerYear = filteredPublications.length / years.length;
 
             insightsDiv.innerHTML = `
-                <p style="margin-bottom: 10px;"><strong>📚 Top Research Topics:</strong></p>
-                <ul style="margin-left: 20px; margin-bottom: 15px;">
-                    ${topKeywords.map(([kw, count]) => 
-                        `<li>${kw}: ${count} papers</li>`
-                    ).join('')}
+                <p><strong>📚 Top Research Topics:</strong></p>
+                <ul>
+                    ${topKeywords.map(([kw, count]) => `<li>${kw}: ${count} papers</li>`).join('')}
                 </ul>
                 <p><strong>📊 Avg Publications/Year:</strong> ${Math.round(avgPerYear)}</p>
-                <p style="margin-top: 10px;"><strong>📈 Peak Year:</strong> ${
-                    Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'
-                }</p>
+                <p><strong>📈 Peak Year:</strong> ${Object.entries(yearCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'}</p>
             `;
         }
 
-        // Search and filter functionality
+        // Filtering
         document.getElementById('searchInput').addEventListener('input', (e) => {
             const query = e.target.value.toLowerCase();
             applyFilters(query, document.getElementById('yearFilter').value);
         });
 
         document.getElementById('yearFilter').addEventListener('change', (e) => {
-            const selectedYear = e.target.value;
             const query = document.getElementById('searchInput').value.toLowerCase();
-            applyFilters(query, selectedYear);
+            applyFilters(query, e.target.value);
         });
 
         function applyFilters(searchQuery, yearFilter) {
-            console.log("Filtering with query:", searchQuery, "year:", yearFilter);
-
             filteredPublications = allPublications.filter(pub => {
                 const matchesSearch = !searchQuery || 
                     pub.title.toLowerCase().includes(searchQuery) ||
                     pub.keywords.some(kw => kw.includes(searchQuery));
 
-                console.log(pub.title, pub.keywords, " -> ", matchesSearch);
-
                 const matchesYear = yearFilter === 'all' || pub.year === yearFilter;
-                
                 return matchesSearch && matchesYear;
             });
 
             renderAll();
         }
-        
+
         function exportResults() {
             const csv = Papa.unparse(filteredPublications);
             const blob = new Blob([csv], { type: 'text/csv' });
@@ -311,7 +266,6 @@
             a.click();
         }
 
-        // Add keyboard shortcut for search
         document.addEventListener('keydown', (e) => {
             if (e.ctrlKey && e.key === 'k') {
                 e.preventDefault();
@@ -319,45 +273,6 @@
             }
         });
 
-        // Add sample queries for demo
-        const sampleQueries = [
-            'bone',
-            'radiation',
-            'plant',
-            'microgravity',
-            'muscle',
-            'cardiovascular',
-            'immune',
-            'bacteria'
-        ];
-
-        function runDemo() {
-            let index = 0;
-            const demoInterval = setInterval(() => {
-                if (index >= sampleQueries.length) {
-                    clearInterval(demoInterval);
-                    document.getElementById('searchInput').value = '';
-                    applyFilters('', 'all');
-                    return;
-                }
-                
-                const query = sampleQueries[index];
-                document.getElementById('searchInput').value = query;
-                applyFilters(query, 'all');
-                index++;
-            }, 2000);
-        }
-
-        // Add demo button when data is loaded
-        function addDemoButton() {
-            const controls = document.querySelector('.controls');
-            const demoBtn = document.createElement('button');
-            demoBtn.textContent = '🎬 Run Demo';
-            demoBtn.onclick = runDemo;
-            controls.appendChild(demoBtn);
-        }
-
-        // Initial load prompt
         console.log('BioSpace Explorer Ready! Click "Load Data" to begin.');
         console.log('Keyboard shortcut: Ctrl+K to focus search');
     </script>
