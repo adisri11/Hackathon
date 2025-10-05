@@ -56,6 +56,15 @@
             </div>
 
             <div class="publications" id="publicationList"></div>
+
+            <div class="chatbot-container">
+                <h3>🤖 Ask the BioSpace AI</h3>
+                <div id="chatWindow" class="chat-window"></div>
+                <div class="chat-input">
+                  <input type="text" id="chatMessage" placeholder="Ask about space biology..." />
+                  <button onclick="sendMessage()">Send</button>
+                </div>
+              </div>              
         </div>
     </div>
 
@@ -288,7 +297,7 @@
             `;
         }
 
-        const HF_API_TOKEN = "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"; // token
+        const HF_API_TOKEN = "token"; // token
         const HF_SUMMARY_MODEL = "google/pegasus-xsum";
 
         async function generateSummary(text) {
