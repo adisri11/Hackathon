@@ -47,6 +47,7 @@
                 <div class="stat-box">
                     <h3>Publications by Year</h3>
                     <canvas id="yearChart"></canvas>
+                    <div id="unknownCount" style="margin-top: 8px; font-style: italic;"></div>
                 </div>
                 <div class="stat-box">
                     <h3>Quick Insights</h3>
@@ -94,6 +95,7 @@
                         });
 
                         filteredPublications = [...allPublications];
+                        populateYearFilter();
                         renderAll();
 
                         document.getElementById('loading').style.display = 'none';
@@ -121,7 +123,6 @@
             renderStats();
             renderChart();
             renderPublications();
-            populateYearFilter();
             generateInsights();
         }
 
@@ -133,9 +134,12 @@
 
         function renderChart() {
             const yearCounts = {};
+            let unknownCount = 0;
             filteredPublications.forEach(pub => {
                 if (pub.year !== 'Unknown') {
                     yearCounts[pub.year] = (yearCounts[pub.year] || 0) + 1;
+                } else {
+                    unknownCount++;
                 }
             });
 
@@ -171,6 +175,10 @@
                     }
                 }
             });
+            const unknownDiv = document.getElementById('unknownCount');
+            unknownDiv.textContent = unknownCount > 0 
+                ? `Publications with unknown year: ${unknownCount}` 
+                : '';
         }
 
         function renderPublications() {
@@ -197,6 +205,19 @@
             const select = document.getElementById('yearFilter');
             select.innerHTML = '<option value="all">All Years</option>' +
                 years.map(year => `<option value="${year}">${year}</option>`).join('');
+        }
+
+        function setYearFilter(year) {
+            const yearFilter = document.getElementById('yearFilter');
+            yearFilter.value = year; 
+
+            const displayDiv = document.getElementById('selectedYearDisplay');
+            displayDiv.textContent = year === 'all'
+                ? 'Showing publications for: All Years'
+                : `Showing publications for: ${year}`;
+
+            const searchQuery = document.getElementById('searchInput').value.toLowerCase();
+            applyFilters(searchQuery, year);
         }
 
         function generateInsights() {
