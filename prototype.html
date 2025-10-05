@@ -56,7 +56,15 @@
             </div>
 
             <div class="publications" id="publicationList"></div>
-          
+
+            <div class="chatbot-container">
+                <h3>🤖 Ask the BioSpace AI</h3>
+                <div id="chatWindow" class="chat-window"></div>
+                <div class="chat-input">
+                  <input type="text" id="chatMessage" placeholder="Ask about space biology..." />
+                  <button onclick="sendMessage()">Send</button>
+                </div>
+              </div>              
         </div>
     </div>
 
@@ -183,35 +191,18 @@
         }
 
         async function renderPublications() {
-            // const listContainer = document.getElementById('publicationList');
-            // if (filteredPublications.length === 0) {
-            //     listContainer.innerHTML = '<div class="pub-card"><p>No publications found matching your criteria.</p></div>';
-            //     return;
-            // }
-
-            // listContainer.innerHTML = filteredPublications.map(pub => `
-            //     <div class="pub-card">
-            //         <div class="pub-title">${pub.title}</div>
-            //         <div style="margin: 10px 0;">
-            //             <span class="badge">${pub.year}</span>
-            //             ${pub.keywords.slice(0, 3).map(kw => `<span class="badge">${kw}</span>`).join('')}
-            //         </div>
-            //         <a href="${pub.url}" target="_blank" class="pub-link">Read Full Paper →</a>
-            //     </div>
-            // `).join('');
             const listContainer = document.getElementById('publicationList');
             if (filteredPublications.length === 0) {
                 listContainer.innerHTML = '<div class="pub-card"><p>No publications found matching your criteria.</p></div>';
                 return;
             }
 
-            listContainer.innerHTML = ""; // clear before rendering
+            listContainer.innerHTML = ""; // Clear before rendering
 
             for (const pub of filteredPublications) {
                 const card = document.createElement("div");
                 card.classList.add("pub-card");
 
-                // Reuse cached summary if available
                 const summaryText = pub.summary || "⏳ Generating summary...";
 
                 card.innerHTML = `
@@ -221,20 +212,175 @@
                         ${pub.keywords.slice(0, 3).map(kw => `<span class="badge">${kw}</span>`).join('')}
                     </div>
                     <div class="pub-summary">${summaryText}</div>
+                
+                    <div class="pub-abstract" style="display:none;">Loading abstract...</div>
+                    
                     <a href="${pub.url}" target="_blank" class="pub-link">Read Full Paper →</a>
                 `;
 
-                listContainer.appendChild(card);
+            card.addEventListener("click", async (e) => {
+                // Ignore clicks on the "Read Full Paper" link
+                if (e.target.classList.contains('pub-link')) return;
+                
+                const abstractDiv = card.querySelector(".pub-abstract");
+                const isVisible = abstractDiv.style.display === "block";
 
-                // Only fetch if not cached yet
-                if (!pub.summary) {
-                    const summaryDiv = card.querySelector(".pub-summary");
-                    const summary = await generateSummary(pub.title);
-                    pub.summary = summary;  // ✅ cache it
-                    summaryDiv.textContent = summary;
+                if (isVisible) {
+                    abstractDiv.style.display = "none";
+                    return;
                 }
+
+                abstractDiv.style.display = "block";
+
+                if (!pub.abstract) {
+                    abstractDiv.textContent = "⏳ Fetching abstract...";
+                    pub.abstract = await fetchAbstractFromPMC(pub.url);
+                }
+
+                const abstractContent = pub.abstract || "No abstract found.";
+                abstractDiv.innerHTML = ` <h4 style="margin-bottom: 6px;">Abstract</h4> <p>${abstractContent}</p>`;
+
+                // Adding similar articles section
+                abstractDiv.innerHTML += `
+                    <div class="similar-articles" style="margin-top:10px;">
+                        <em>Loading similar articles...</em>
+                    </div>
+                `;
+
+                const similarDiv = abstractDiv.querySelector(".similar-articles");
+                const similar = await fetchSimilarArticles(pub.url);
+                if (similar.length > 0) {
+                    similarDiv.innerHTML = `
+                        <h4>🔗 Similar Articles</h4>
+                        <ul>
+                            ${similar.map(a => {
+                                const link = a.pmcid 
+                                    ? `https://pmc.ncbi.nlm.nih.gov/articles/${a.pmcid}/`
+                                    : `https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/`;
+                                return `<li><a href="${link}" target="_blank">${a.title}</a></li>`;
+                            }).join('')}
+                        </ul>
+                    `;
+                } else {
+                    similarDiv.innerHTML = "<em>No similar articles found.</em>";
+                }
+        });
+
+        listContainer.appendChild(card);
+
+        if (!pub.summary) {
+            const summaryDiv = card.querySelector(".pub-summary");
+            const summary = await generateSummary(pub.title);
+            pub.summary = summary;
+            summaryDiv.textContent = summary;
+        }
+    }
+}
+
+
+       async function fetchAbstractFromPMC(url) {
+            try {
+                // Extract the PMC ID from the link (e.g., PMC7998608)
+                const idMatch = url.match(/PMC\d+/);
+                if (!idMatch) return "No PMC ID found in URL.";
+
+                const pmcId = idMatch[0];
+
+                // Europe PMC API endpoint for fetching abstracts
+                const apiUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/${pmcId}/fullTextXML`;
+
+                const response = await fetch(apiUrl);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+                const xmlText = await response.text();
+
+                // Extract the abstract text from the XML
+                const abstractMatch = xmlText.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/i);
+                if (!abstractMatch) return "Abstract not found in XML.";
+
+                // Clean up any XML tags inside
+                const abstract = abstractMatch[1].replace(/<[^>]+>/g, '').trim();
+
+                return abstract || "Abstract not found.";
+            } catch (err) {
+                console.error("PMC fetch failed:", err);
+                return "Error fetching abstract.";
             }
         }
+
+        // async function fetchSimilarArticles(url) {
+        //     try {
+        //         const idMatch = url.match(/PMC(\d+)/);
+        //         if (!idMatch) return [];
+
+        //         const pmcid = idMatch[1];
+        //         const apiUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/PMC${pmcid}/similar`;
+
+        //         const response = await fetch(apiUrl);
+        //         const xmlText = await response.text();
+
+        //         // Parse XML (Europe PMC returns XML by default)
+        //         const parser = new DOMParser();
+        //         const xmlDoc = parser.parseFromString(xmlText, "application/xml");
+        //         const articles = Array.from(xmlDoc.querySelectorAll("resultList > result"))
+        //             .slice(0, 5) // get top 5
+        //             .map(node => ({
+        //                 title: node.querySelector("title")?.textContent || "No title",
+        //                 id: node.querySelector("id")?.textContent || "",
+        //                 source: node.querySelector("source")?.textContent || "",
+        //                 pmcid: node.querySelector("pmcid")?.textContent || "",
+        //             }));
+
+        //         return articles;
+        //     } catch (err) {
+        //         console.error("Error fetching similar articles:", err);
+        //         return [];
+        //     }
+        // }
+
+       async function fetchSimilarArticles(url) {
+    try {
+        const idMatch = url.match(/PMC(\d+)/);
+        if (!idMatch) return [];
+
+        const pmcid = `PMC${idMatch[1]}`;
+        
+        // Use Europe PMC's search API to find related articles
+        const apiUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(pmcid)}&resultType=core&pageSize=6&format=json`;
+        
+        const response = await fetch(apiUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        
+        // Get the first result (the article itself) to extract keywords for better search
+        const mainArticle = data.resultList?.result?.[0];
+        if (!mainArticle) return [];
+        
+        // Search for articles with similar keywords
+        const keywords = mainArticle.keywordList?.keyword?.slice(0, 3).join(' OR ') || mainArticle.title?.split(' ').slice(0, 5).join(' ');
+        const similarUrl = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(keywords)}&pageSize=6&format=json`;
+        
+        const similarResponse = await fetch(similarUrl);
+        const similarData = await similarResponse.json();
+        
+        // Filter out the original article and return up to 5 similar ones
+        const articles = (similarData.resultList?.result || [])
+            .filter(article => article.pmcid && article.pmcid !== pmcid)
+            .slice(0, 5)
+            .map(article => ({
+                title: article.title || "No title",
+                pmcid: article.pmcid,
+                pmid: article.pmid || null
+            }));
+
+        return articles;
+    } catch (err) {
+        console.error("Error fetching similar articles:", err);
+        return [];
+    }
+}
+        
 
         function populateYearFilter() {
             const years = [...new Set(allPublications.map(p => p.year).filter(y => y !== 'Unknown'))].sort().reverse();
@@ -363,5 +509,6 @@
         console.log('BioSpace Explorer Ready! Click "Load Data" to begin.');
         console.log('Keyboard shortcut: Ctrl+K to focus search');
     </script>
+    
 </body>
 </html>
