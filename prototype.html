@@ -1,331 +1,401 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BioSpace Explorer - Quick Prototype</title>
-    <link rel="stylesheet" href="stylesheet.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BioSpace Explorer - Quick Prototype</title>
+<link rel="stylesheet" href="stylesheet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
 <div class="container">
-    <header>
-        <h1>🚀 BioSpace Explorer</h1>
-        <p class="subtitle">Explore NASA Space Biology Publications</p>
-    </header>
+<header>
+<h1>🚀 BioSpace Explorer</h1>
+<p class="subtitle">Explore NASA Space Biology Publications</p>
+</header>
 
-    <div class="controls" id="preLoadControls">
-        <button onclick="loadData()">Load Data</button>
-    </div>
+<div class="controls" id="preLoadControls">
+<button onclick="loadData()">Load Data</button>
+</div>
 
-    <div id="loading" class="loading">
-        Click "Load Data" to start exploring 608 publications
-    </div>
+<div id="loading" class="loading">
+Click "Load Data" to start exploring 608 publications
+</div>
 
-    <div class="controls" id="postLoadControls" style="display: none;">
-        <input type="text" id="searchInput" placeholder="Search publications...">
-        <select id="yearFilter">
-            <option value="all">All Years</option>
-        </select>
-        <button onclick="exportResults()">Export Results</button>
-    </div>
+<div class="controls" id="postLoadControls" style="display: none;">
+<input type="text" id="searchInput" placeholder="Search publications...">
+<select id="yearFilter">
+<option value="all">All Years</option>
+</select>
+<button onclick="exportResults()">Export Results</button>
+</div>
 
-    <div id="mainContent" class="main-content" style="display: none;">
-        <div class="stats-panel">
-            <div class="stat-box">
-                <h3>Total Publications</h3>
-                <div class="stat-number" id="totalCount">0</div>
-            </div>
-            <div class="stat-box">
-                <h3>Years Covered</h3>
-                <div class="stat-number" id="yearCount">0</div>
-            </div>
-            <div class="stat-box">
-                <h3>Publications by Year</h3>
-                <canvas id="yearChart"></canvas>
-                <div id="unknownCount" style="margin-top: 8px; font-style: italic;"></div>
-            </div>
-            <div class="stat-box">
-                <h3>Quick Insights</h3>
-                <div id="insights"></div>
-            </div>
-        </div>
+<div id="mainContent" class="main-content" style="display: none;">
+<div class="stats-panel">
+<div class="stat-box">
+<h3>Total Publications</h3>
+<div class="stat-number" id="totalCount">0</div>
+</div>
+<div class="stat-box">
+<h3>Years Covered</h3>
+<div class="stat-number" id="yearCount">0</div>
+</div>
+<div class="stat-box">
+<h3>Publications by Year</h3>
+<canvas id="yearChart"></canvas>
+<div id="unknownCount" style="margin-top: 8px; font-style: italic;"></div>
+</div>
+<div class="stat-box">
+<h3>Top Research Topics</h3>
+<canvas id="topicPie"></canvas>
+</div>
+<div class="stat-box">
+<h3>📈 Keyword Trends</h3>
+<canvas id="keywordChart"></canvas>
+</div>
+<div class="stat-box">
+<h3>Quick Insights</h3>
+<div id="insights"></div>
+</div>
+</div>
 
-        <div class="publications" id="publicationList"></div>
-    </div>
+<div class="publications" id="publicationList"></div>
 </div>
 
 <script>
 let allPublications = [];
 let filteredPublications = [];
-let chart = null;
+let yearChart=null, topicPieChart=null, keywordTrendChart=null;
 
-const HF_API_TOKEN = ""; // Hugging Face token
-const HF_SUMMARY_MODEL = "google/pegasus-xsum";
+const HF_API_TOKEN="token"; //token
+const HF_SUMMARY_MODEL="google/pegasus-xsum";
 
-async function loadData() {
-    document.getElementById('loading').innerHTML = '⏳ Loading publications...';
+let summaryQueue = []; // Queue for lazy-loading summaries
+let isLoadingSummary = false;
+
+// Queue a publication for summary generation
+function queueSummary(pub, card) {
+    summaryQueue.push({ pub, card });
+    loadNextSummary();
+}
+
+// Load the next summary from the queue (one at a time)
+async function loadNextSummary() {
+    if (isLoadingSummary || summaryQueue.length === 0) return;
+    isLoadingSummary = true;
+
+    const { pub, card } = summaryQueue.shift();
+    const summaryDiv = card.querySelector(".pub-summary");
+    summaryDiv.textContent = "⏳ Loading summary...";
 
     try {
-        const response = await fetch('https://raw.githubusercontent.com/jgalazka/SB_publications/refs/heads/main/SB_publication_PMC.csv');
-        const csvText = await response.text();
+        pub.summary = await generateSummary(pub.title);
+        summaryDiv.innerHTML = highlightMatches(pub.summary, document.getElementById('searchInput').value);
+    } catch (err) {
+        console.error(err);
+        summaryDiv.textContent = "Error generating summary.";
+    }
 
-        Papa.parse(csvText, {
-            header: true,
-            skipEmptyLines: true,
-            complete: function(results) {
-                allPublications = results.data.map((row, index) => {
-                    const title = row.Title || row.title || 'Untitled';
-                    const url = row.URL || row.url || row['Link'] || '';
-                    const yearMatch = title.match(/\b(20\d{2})\b/) || url.match(/\b(20\d{2})\b/);
-                    const year = yearMatch ? yearMatch[1] : 'Unknown';
-                    const keywords = extractKeywords(title);
+    isLoadingSummary = false;
+    loadNextSummary();
+}
 
-                    return { id: index, title, url, year, keywords };
-                });
-
-                filteredPublications = [...allPublications];
-                populateYearFilter();
-                renderAll();
-
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('mainContent').style.display = 'grid';
-                document.getElementById('preLoadControls').style.display = 'none';
-                document.getElementById('postLoadControls').style.display = 'flex';
+// Intersection observer to trigger lazy summary loading
+let observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            const card = entry.target;
+            const pubId = card.dataset.pubId;
+            const pub = allPublications[pubId];
+            if (!pub.summary) {
+                queueSummary(pub, card);
             }
+            observer.unobserve(card);
+        }
+    });
+}, { root: null, rootMargin: "0px", threshold: 0.1 });
+
+// AI summary generation
+async function generateSummary(text) {
+    try {
+        const response = await fetch(`https://api-inference.huggingface.co/models/${HF_SUMMARY_MODEL}`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${HF_API_TOKEN}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ inputs: text, parameters: { max_length: 120, min_length: 30 } })
         });
-    } catch (error) {
-        document.getElementById('loading').innerHTML = '❌ Error loading data.';
-        console.error('Error:', error);
+        if (!response.ok) throw new Error(`HF API error: ${response.status}`);
+        const data = await response.json();
+        return data[0]?.summary_text || "No summary available.";
+    } catch (err) {
+        console.error("Summarization error:", err);
+        return "Error generating summary.";
     }
 }
 
-function extractKeywords(text) {
-    const stopWords = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as','into','through','during','before','after','above','below']);
-    return text.toLowerCase().match(/\b[a-z]+\b/g)
-        ?.filter(word => word.length>4 && !stopWords.has(word))
-        .slice(0,5) || [];
+// Load CSV data
+async function loadData(){
+document.getElementById('loading').innerHTML='⏳ Loading publications...';
+try{
+const response=await fetch('https://raw.githubusercontent.com/jgalazka/SB_publications/refs/heads/main/SB_publication_PMC.csv');
+const csvText=await response.text();
+Papa.parse(csvText,{header:true,skipEmptyLines:true,complete:function(results){
+allPublications=results.data.map((row,index)=>{
+const title=row.Title||row.title||'Untitled';
+const url=row.URL||row.url||row['Link']||'';
+const yearMatch=title.match(/\b(20\d{2})\b/)||url.match(/\b(20\d{2})\b/);
+const year=yearMatch?yearMatch[1]:'Unknown';
+const keywords=extractKeywords(title);
+return {id:index,title,url,year,keywords};
+});
+filteredPublications=[...allPublications];
+populateYearFilter();
+renderAll();
+document.getElementById('loading').style.display='none';
+document.getElementById('mainContent').style.display='grid';
+document.getElementById('preLoadControls').style.display='none';
+document.getElementById('postLoadControls').style.display='flex';
+}});
+}catch(error){
+document.getElementById('loading').innerHTML='❌ Error loading data. Please try again.';
+console.error(error);
+}
 }
 
-function renderAll() {
-    renderStats();
-    renderChart();
-    renderPublications();
-    generateInsights();
+// Extract keywords
+function extractKeywords(text){
+const stopWords=new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by','from','as','into','through','during','before','after','above','below']);
+return text.toLowerCase().match(/\b[a-z]+\b/g)?.filter(w=>w.length>4 && !stopWords.has(w)).slice(0,5)||[];
 }
 
-function renderStats() {
-    document.getElementById('totalCount').textContent = filteredPublications.length;
-    const years = new Set(filteredPublications.map(p => p.year).filter(y => y !== 'Unknown'));
-    document.getElementById('yearCount').textContent = years.size;
+// Render stats, charts, insights
+function renderAll(){
+renderStats();
+renderYearChart();
+renderTopicPie();
+renderKeywordTrendChart();
+renderPublications();
+generateInsights();
 }
 
-function renderChart() {
-    const yearCounts = {};
-    let unknownCount = 0;
-    filteredPublications.forEach(pub => {
-        if(pub.year!=='Unknown'){ yearCounts[pub.year]=(yearCounts[pub.year]||0)+1; }
-        else{ unknownCount++; }
-    });
-    const sortedYears = Object.keys(yearCounts).sort();
-    const counts = sortedYears.map(year=>yearCounts[year]);
-    const ctx=document.getElementById('yearChart');
-    if(chart) chart.destroy();
-
-    chart = new Chart(ctx, {
-        type:'bar',
-        data: { labels: sortedYears, datasets:[{ label:'Publications', data:counts, backgroundColor:'rgba(102,126,234,0.8)', borderColor:'rgba(102,126,234,1)', borderWidth:2 }] },
-        options:{ responsive:true, maintainAspectRatio:true, scales:{y:{beginAtZero:true, ticks:{stepSize:10}}}, plugins:{legend:{display:false}} }
-    });
-
-    document.getElementById('unknownCount').textContent = unknownCount>0? `Publications with unknown year: ${unknownCount}` : '';
+function renderStats(){
+document.getElementById('totalCount').textContent=filteredPublications.length;
+const years=new Set(filteredPublications.map(p=>p.year).filter(y=>'Unknown'!==y));
+document.getElementById('yearCount').textContent=years.size;
 }
 
-function populateYearFilter() {
-    const years = [...new Set(allPublications.map(p=>p.year).filter(y=>y!=='Unknown'))].sort().reverse();
-    const select=document.getElementById('yearFilter');
-    select.innerHTML='<option value="all">All Years</option>'+years.map(y=>`<option value="${y}">${y}</option>`).join('');
+function renderYearChart(){
+const counts={}; let unknown=0;
+filteredPublications.forEach(pub=>{
+pub.year!=='Unknown'?counts[pub.year]=(counts[pub.year]||0)+1:unknown++;
+});
+const sortedYears=Object.keys(counts).sort();
+const data=sortedYears.map(y=>counts[y]);
+if(yearChart) yearChart.destroy();
+yearChart=new Chart(document.getElementById('yearChart'),{
+type:'bar',data:{labels:sortedYears,datasets:[{label:'Publications',data,backgroundColor:'rgba(102,126,234,0.8)',borderColor:'rgba(102,126,234,1)',borderWidth:2}]},
+options:{responsive:true,scales:{y:{beginAtZero:true,ticks:{stepSize:10}}},plugins:{legend:{display:false}}}
+});
+document.getElementById('unknownCount').textContent = unknown?`Publications with unknown year: ${unknown}`:'';
 }
 
-function generateInsights() {
-    const insightsDiv=document.getElementById('insights');
-    const keywordCounts={};
-    filteredPublications.forEach(pub=>pub.keywords.forEach(k=>keywordCounts[k]=(keywordCounts[k]||0)+1));
-    const topKeywords=Object.entries(keywordCounts).sort((a,b)=>b[1]-a[1]).slice(0,5);
-
-    const yearCounts={};
-    filteredPublications.forEach(pub=>{ if(pub.year!=='Unknown'){yearCounts[pub.year]=(yearCounts[pub.year]||0)+1;} });
-    const years=Object.keys(yearCounts).sort();
-    const avgPerYear=filteredPublications.length/years.length;
-
-    insightsDiv.innerHTML=`
-        <p><strong>📚 Top Research Topics:</strong></p>
-        <ul>${topKeywords.map(([kw,c])=>`<li>${kw}: ${c} papers</li>`).join('')}</ul>
-        <p><strong>📊 Avg Publications/Year:</strong> ${Math.round(avgPerYear)}</p>
-        <p><strong>📈 Peak Year:</strong> ${Object.entries(yearCounts).sort((a,b)=>b[1]-a[1])[0]?.[0]||'N/A'}</p>
-    `;
+function renderTopicPie(){
+const counts={};
+allPublications.forEach(pub=>pub.keywords.forEach(kw=>counts[kw]=(counts[kw]||0)+1));
+const top=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+const ctx=document.getElementById('topicPie').getContext('2d');
+if(topicPieChart) topicPieChart.destroy();
+topicPieChart=new Chart(ctx,{type:'pie',data:{labels:top.map(t=>t[0]),datasets:[{data:top.map(t=>t[1]),backgroundColor:top.map(()=>getRandomColor())}]},options:{responsive:true}});
 }
 
-async function renderPublications() {
-    const listContainer=document.getElementById('publicationList');
-    if(filteredPublications.length===0){ listContainer.innerHTML='<div class="pub-card"><p>No publications found.</p></div>'; return; }
-    listContainer.innerHTML='';
+function renderKeywordTrendChart(){
+const countsByYear={};
+filteredPublications.forEach(pub=>{
+if(pub.year!=='Unknown'){
+pub.keywords.forEach(kw=>{
+if(!countsByYear[kw]) countsByYear[kw]={};
+countsByYear[kw][pub.year]=(countsByYear[kw][pub.year]||0)+1;
+});
+}
+});
+const topKeywords=Object.entries(generateKeywordStats()).sort((a,b)=>b[1]-a[1]).slice(0,5).map(k=>k[0]);
+const years=[...new Set(filteredPublications.map(p=>p.year).filter(y=>'Unknown'!==y))].sort();
+const datasets=topKeywords.map(kw=>({label:kw,data:years.map(y=>countsByYear[kw]?.[y]||0),borderColor:getRandomColor(),fill:false,tension:0.2}));
+const ctx=document.getElementById('keywordChart').getContext('2d');
+if(keywordTrendChart) keywordTrendChart.destroy();
+keywordTrendChart=new Chart(ctx,{type:'line',data:{labels:years,datasets},options:{responsive:true,plugins:{legend:{position:'bottom'}}}});
+}
 
-    const observer = new IntersectionObserver((entries, obs)=>{
-        entries.forEach(async entry=>{
-            if(entry.isIntersecting){
-                const card=entry.target;
-                const pub=allPublications[card.dataset.index];
-                const summaryDiv=card.querySelector('.pub-summary');
-                if(!pub.summary){
-                    const summary=await generateSummary(pub.title);
-                    pub.summary=summary;
-                    summaryDiv.textContent=summary;
-                }
-                obs.unobserve(card);
-            }
-        });
-    }, { rootMargin:'200px' });
+function generateKeywordStats(){
+const counts={};
+allPublications.forEach(pub=>pub.keywords.forEach(kw=>counts[kw]=(counts[kw]||0)+1));
+return counts;
+}
 
-    filteredPublications.forEach((pub,i)=>{
-        const card=document.createElement('div');
-        card.classList.add('pub-card');
-        card.dataset.index=i;
+function getRandomColor(){return `hsl(${Math.floor(Math.random()*360)},70%,50%)`;}
 
-        card.innerHTML=`
-            <div class="pub-title">${pub.title}</div>
-            <div style="margin:10px 0;">
-                <span class="badge">${pub.year}</span>
-                ${pub.keywords.slice(0,3).map(kw=>`<span class="badge">${kw}</span>`).join('')}
-            </div>
-            <div class="pub-summary">⏳ Summary loading...</div>
-            <div class="pub-abstract" style="display:none;"></div>
-            <a href="${pub.url}" target="_blank" class="pub-link">Read Full Paper →</a>
-        `;
+// Generate insights
+function generateInsights(){
+const insightsDiv = document.getElementById('insights');
+const counts={};
+filteredPublications.forEach(pub=>pub.keywords.forEach(kw=>counts[kw]=(counts[kw]||0)+1));
+const topKeywords=Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,5);
+const yearCounts={};
+filteredPublications.forEach(pub=>{if(pub.year!=='Unknown') yearCounts[pub.year]=(yearCounts[pub.year]||0)+1;});
+const years=Object.keys(yearCounts).sort();
+const avgPerYear=filteredPublications.length/years.length;
+insightsDiv.innerHTML=`<ul>${topKeywords.map(([kw,count])=>`<li>${kw}: ${count} papers</li>`).join('')}</ul>
+<p>Avg publications/year: ${Math.round(avgPerYear)}</p>
+<p>Peak year: ${Object.entries(yearCounts).sort((a,b)=>b[1]-a[1])[0]?.[0]||'N/A'}</p>`;
+}
 
-        card.addEventListener('click', async e=>{
-            if(e.target.classList.contains('pub-link')) return;
-            const abstractDiv=card.querySelector('.pub-abstract');
-            if(abstractDiv.style.display==='block'){ abstractDiv.style.display='none'; return; }
-            abstractDiv.style.display='block';
+// Populate year filter
+function populateYearFilter(){
+const years=[...new Set(allPublications.map(p=>p.year).filter(y=>'Unknown'!==y))].sort().reverse();
+const select=document.getElementById('yearFilter');
+select.innerHTML='<option value="all">All Years</option>'+years.map(y=>`<option value="${y}">${y}</option>`).join('');
+}
 
-            if(!pub.abstract){
-                abstractDiv.innerHTML=`⏳ Fetching abstract and similar articles...
-                    <div class="similar-articles" style="margin-top:10px;">Loading similar articles...</div>`;
-                try{
-                    const [abstract, similar]=await Promise.all([
-                        fetchAbstractFromPMC(pub.url),
-                        fetchSimilarArticles(pub.url)
-                    ]);
-                    pub.abstract=abstract;
-                    pub.similar=similar;
+// Render publications
+function renderPublications(){
+const listContainer = document.getElementById('publicationList');
+listContainer.innerHTML = filteredPublications.length ? '' : '<div class="pub-card"><p>No publications found.</p></div>';
 
-                    abstractDiv.innerHTML=`<h4 style="margin-bottom:6px;">Abstract</h4><p>${abstract}</p>`;
+filteredPublications.forEach(pub=>{
+const card=document.createElement('div');
+card.classList.add('pub-card');
+card.dataset.pubId = pub.id;
 
-                    const similarDiv=document.createElement('div');
-                    similarDiv.classList.add('similar-articles');
-                    similarDiv.style.marginTop='10px';
-                    if(similar.length>0){
-                        similarDiv.innerHTML=`<h4>🔗 Similar Articles</h4><ul>${similar.map(a=>{
-                            const link=a.pmcid?`https://www.ncbi.nlm.nih.gov/pmc/articles/${a.pmcid}/`:`https://pubmed.ncbi.nlm.nih.gov/${a.pmid||''}/`;
-                            return `<li><a href="${link}" target="_blank">${a.title}</a></li>`;
-                        }).join('')}</ul>`;
-                    } else { similarDiv.innerHTML="<em>No similar articles found.</em>"; }
-                    abstractDiv.appendChild(similarDiv);
-                } catch(err){
-                    abstractDiv.innerHTML="<em>Error loading abstract or similar articles.</em>";
-                    console.error(err);
-                }
-            }
-        });
+card.innerHTML=`
+<div class="pub-title">${pub.title}</div>
+<div style="margin:10px 0;">${pub.keywords.slice(0,3).map(kw=>`<span class="badge">${kw}</span>`).join('')} 
+<span class="badge">${pub.year}</span></div>
+<div class="pub-summary">⏳ Loading summary...</div>
+<div class="pub-abstract" style="display:none;"></div>
+<a href="${pub.url}" target="_blank" class="pub-link">Read Full Paper →</a>
+`;
 
-        observer.observe(card);
-        listContainer.appendChild(card);
-    });
+card.addEventListener("click", async e => {
+if(e.target.classList.contains('pub-link')) return;
+const abstractDiv = card.querySelector(".pub-abstract");
+if(abstractDiv.style.display==='block'){abstractDiv.style.display='none'; return;}
+abstractDiv.style.display='block';
+
+if(!pub.abstract){
+abstractDiv.innerHTML=`⏳ Fetching abstract and similar articles...`;
+const [abstract, similar]=await Promise.all([
+fetchAbstractFromPMC(pub.url),
+fetchSimilarArticles(pub.url)
+]);
+pub.abstract = abstract;
+pub.similar = similar;
+
+abstractDiv.innerHTML=`<h4>Abstract</h4><p>${abstract}</p>`;
+const similarDiv=document.createElement('div');
+similarDiv.classList.add('similar-articles');
+similarDiv.style.marginTop='10px';
+
+if(similar.length>0){
+similarDiv.innerHTML=`<h4>🔗 Similar Articles</h4><ul>${similar.map(a=>{
+const link = a.pmcid ? `https://www.ncbi.nlm.nih.gov/pmc/articles/${a.pmcid}/` 
+                        : `https://pubmed.ncbi.nlm.nih.gov/${a.pmid||''}/`;
+return `<li><a href="${link}" target="_blank">${a.title}</a></li>`;
+}).join('')}</ul>`;
+}else{similarDiv.innerHTML="<em>No similar articles found.</em>";}
+abstractDiv.appendChild(similarDiv);
+}
+});
+
+// Observe card for lazy-loading AI summary
+observer.observe(card);
+
+listContainer.appendChild(card);
+});
+}
+
+// Highlight search matches
+function highlightMatches(text,query){
+if(!query) return text;
+const words=query.split(/\s+/).filter(Boolean);
+let highlighted=text;
+words.forEach(word=>{
+const re=new RegExp(`(${word})`,'gi');
+highlighted=highlighted.replace(re,'<mark>$1</mark>');
+});
+return highlighted;
 }
 
 // Fetch abstract
 async function fetchAbstractFromPMC(url){
-    try{
-        const idMatch=url.match(/PMC\d+/);
-        if(!idMatch) return "No PMC ID found.";
-        const pmcId=idMatch[0];
-        const apiUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/${pmcId}/fullTextXML`;
-        const resp=await fetch(apiUrl);
-        const xml=await resp.text();
-        const m=xml.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/i);
-        return m? m[1].replace(/<[^>]+>/g,'').trim():"Abstract not found.";
-    } catch(err){ console.error(err); return "Error fetching abstract."; }
+try{
+const idMatch=url.match(/PMC\d+/);
+if(!idMatch) return "No PMC ID found.";
+const pmcId=idMatch[0];
+const apiUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/${pmcId}/fullTextXML`;
+const resp=await fetch(apiUrl);
+const xml=await resp.text();
+const m=xml.match(/<abstract[^>]*>([\s\S]*?)<\/abstract>/i);
+return m? m[1].replace(/<[^>]+>/g,'').trim():"Abstract not found.";
+}catch(err){console.error(err); return "Error fetching abstract.";}
 }
 
 // Fetch similar articles
 async function fetchSimilarArticles(url){
-    try{
-        const idMatch=url.match(/PMC(\d+)/);
-        if(!idMatch) return [];
-        const pmcid=`PMC${idMatch[1]}`;
-        const apiUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${pmcid}&resultType=core&pageSize=6&format=json`;
-        const resp=await fetch(apiUrl);
-        const data=await resp.json();
-        const mainArticle=data.resultList?.result?.[0];
-        if(!mainArticle) return [];
-        const keywords=mainArticle.keywordList?.keyword?.slice(0,3).join(' OR ') 
-            || mainArticle.title?.split(' ').slice(0,5).join(' ');
-        const similarUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(keywords)}&pageSize=6&format=json`;
-        const similarResp=await fetch(similarUrl);
-        const similarData=await similarResp.json();
-        return (similarData.resultList?.result||[]).filter(a=>a.pmcid && a.pmcid!==pmcid).slice(0,5).map(a=>({title:a.title||"No title",pmcid:a.pmcid,pmid:a.pmid||null}));
-    } catch(err){ console.error("Error fetching similar articles:",err); return []; }
-}
-
-// AI summary
-async function generateSummary(text){
-    try{
-        const response = await fetch(`https://api-inference.huggingface.co/models/${HF_SUMMARY_MODEL}`,{
-            method:"POST",
-            headers:{"Authorization":`Bearer ${HF_API_TOKEN}`,"Content-Type":"application/json"},
-            body:JSON.stringify({inputs:text,parameters:{max_length:120,min_length:30}})
-        });
-        const data = await response.json();
-        return data[0]?.summary_text || "No summary available.";
-    } catch(err){ console.error(err); return "Error generating summary."; }
+try{
+const idMatch=url.match(/PMC(\d+)/);
+if(!idMatch) return [];
+const pmcid=`PMC${idMatch[1]}`;
+const apiUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${pmcid}&resultType=core&pageSize=6&format=json`;
+const response=await fetch(apiUrl);
+if(!response.ok) return [];
+const data=await response.json();
+const mainArticle=data.resultList?.result?.[0];
+if(!mainArticle) return [];
+const keywords=mainArticle.keywordList?.keyword?.slice(0,3).join(' OR ') 
+|| mainArticle.title?.split(' ').slice(0,5).join(' ');
+const similarUrl=`https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(keywords)}&pageSize=6&format=json`;
+const similarResp=await fetch(similarUrl);
+const similarData=await similarResp.json();
+return (similarData.resultList?.result||[]).filter(a=>a.pmcid && a.pmcid!==pmcid).slice(0,5).map(a=>({title:a.title||"No title",pmcid:a.pmcid,pmid:a.pmid||null}));
+}catch(err){console.error("Error fetching similar articles:",err); return [];}
 }
 
 // Filtering
 document.getElementById('searchInput').addEventListener('input',e=>{
-    applyFilters(e.target.value.toLowerCase(),document.getElementById('yearFilter').value);
+applyFilters(e.target.value.toLowerCase(),document.getElementById('yearFilter').value);
 });
 document.getElementById('yearFilter').addEventListener('change',e=>{
-    applyFilters(document.getElementById('searchInput').value.toLowerCase(),e.target.value);
+applyFilters(document.getElementById('searchInput').value.toLowerCase(),e.target.value);
 });
 
 function applyFilters(query,year){
-    filteredPublications = allPublications.filter(pub=>{
-        const matchesSearch = !query || pub.title.toLowerCase().includes(query) || pub.keywords.some(k=>k.includes(query));
-        const matchesYear = year==='all' || pub.year===year;
-        return matchesSearch && matchesYear;
-    });
-    renderAll();
+filteredPublications=allPublications.filter(pub=>{
+const matchesSearch=!query || pub.title.toLowerCase().includes(query) || pub.keywords.some(k=>k.includes(query));
+const matchesYear=year==='all' || pub.year===year;
+return matchesSearch && matchesYear;
+});
+renderAll();
 }
 
 // Export CSV
 function exportResults(){
-    const csv=Papa.unparse(filteredPublications);
-    const blob=new Blob([csv],{type:'text/csv'});
-    const url=window.URL.createObjectURL(blob);
-    const a=document.createElement('a');
-    a.href=url;a.download='biospace_export.csv';a.click();
+const csv=Papa.unparse(filteredPublications);
+const blob=new Blob([csv],{type:'text/csv'});
+const url=window.URL.createObjectURL(blob);
+const a=document.createElement('a');
+a.href=url;a.download='biospace_export.csv';a.click();
 }
 
 // Keyboard shortcut Ctrl+K
 document.addEventListener('keydown',e=>{
-    if(e.ctrlKey && e.key==='k'){e.preventDefault();document.getElementById('searchInput').focus();}
+if(e.ctrlKey && e.key==='k'){e.preventDefault();document.getElementById('searchInput').focus();}
 });
 
 console.log('BioSpace Explorer Ready! Click "Load Data" to begin.');
 console.log('Keyboard shortcut: Ctrl+K to focus search');
-
 </script>
 </body>
 </html>
